@@ -46,10 +46,14 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'name', 'email', 'phone_number', 'date_of_birth', 'gender', 'profile_picture', 'profile_picture_url', 'role', 'password']
+        fields = [
+            'id', 'username', 'name', 'email', 'phone_number', 'date_of_birth', 'gender',
+            'profile_picture', 'profile_picture_url', 'role', 'password', 'fcm_token'
+        ]
         extra_kwargs = {
             'profile_picture': {'required': False},
-            'password': {'write_only': True}
+            'password': {'write_only': True},
+            'fcm_token': {'required': False}  # Optional for FCM token
         }
 
 class LocationSerializer(serializers.ModelSerializer):
@@ -123,7 +127,8 @@ class MessageSerializer(serializers.ModelSerializer):
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
-        fields = '__all__'
+        fields = ['id', 'user', 'notification_type', 'message', 'sent_at', 'read_status']
+        extra_kwargs = {'user': {'read_only': True}}  # User set by view, not request
 
 class BookingInquirySerializer(serializers.ModelSerializer):
     class Meta:

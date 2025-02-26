@@ -93,6 +93,9 @@ CORS_ALLOWED_ORIGINS = [
 
 ROOT_URLCONF = 'zeus_backend.urls'
 
+# zeus_backend/settings.py
+FCM_SERVER_KEY = "your-fcm-server-key-here"  # Replace with your actual key
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',

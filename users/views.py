@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import F, FloatField
 from django.db.models.functions import Sin, Cos, Radians, Sqrt, ACos
@@ -21,6 +22,7 @@ from .serializers import (
     MaintenanceRequestSerializer, SupportTicketSerializer
 )
 from .chatbot import handle_chatbot_request
+from .fcm_utils import send_fcm_notification
 
 class IsAdmin(IsAuthenticated):
     def has_permission(self, request, view):
@@ -94,6 +96,18 @@ class UserViewSet(viewsets.ModelViewSet):
         response = handle_chatbot_request(request.user, message)
         return Response({'response': response})
 
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def update_fcm_token(self, request, pk=None):
+        user = self.get_object()
+        if user != request.user and not request.user.is_staff:
+            return Response({'error': 'Permission denied'}, status=403)
+        fcm_token = request.data.get('fcm_token')
+        if not fcm_token:
+            return Response({'error': 'FCM token required'}, status=400)
+        user.fcm_token = fcm_token
+        user.save()
+        return Response({'status': 'FCM token updated'})
+
 class LocationViewSet(viewsets.ModelViewSet):
     serializer_class = LocationSerializer
     permission_classes = [IsAuthenticated]
@@ -133,29 +147,24 @@ class PropertyViewSet(viewsets.ModelViewSet):
             rental_type = request.query_params.get('rental_type')
             availability_status = request.query_params.get('availability_status')
             sort_by = request.query_params.get('sort_by', 'distance')
-            # Advanced price filters
             price_per_night_min = request.query_params.get('price_per_night_min')
             price_per_night_max = request.query_params.get('price_per_night_max')
             price_per_month_min = request.query_params.get('price_per_month_min')
             price_per_month_max = request.query_params.get('price_per_month_max')
 
-            # Base queryset with geolocation and hardcoded main city
-            MAIN_CITY = "Dar es Salaam"  # Your main operational city
+            MAIN_CITY = "Dar es Salaam"
             queryset = Property.get_active().filter(
                 location__latitude__isnull=False,
                 location__longitude__isnull=False,
-                location__city=MAIN_CITY  # Restrict to Dar es Salaam
+                location__city=MAIN_CITY
             )
 
-            # Apply existing filters
             if property_type:
                 queryset = queryset.filter(property_type=property_type)
             if rental_type:
                 queryset = queryset.filter(rental_type=rental_type)
             if availability_status:
                 queryset = queryset.filter(availability_status=availability_status)
-
-            # Apply advanced price filters
             if price_per_night_min:
                 queryset = queryset.filter(price_per_night__gte=float(price_per_night_min))
             if price_per_night_max:
@@ -165,7 +174,6 @@ class PropertyViewSet(viewsets.ModelViewSet):
             if price_per_month_max:
                 queryset = queryset.filter(price_per_month__lte=float(price_per_month_max))
 
-            # Apply geolocation distance calculation
             queryset = queryset.annotate(
                 distance=6371 * ACos(
                     Cos(Radians(user_lat)) * Cos(Radians(F('location__latitude'))) *
@@ -175,7 +183,6 @@ class PropertyViewSet(viewsets.ModelViewSet):
                 )
             ).filter(distance__lte=radius_km)
 
-            # Sorting
             if sort_by == 'price_per_night':
                 queryset = queryset.order_by('price_per_night')
             elif sort_by == 'price_per_month':
@@ -295,6 +302,16 @@ class NotificationViewSet(viewsets.ModelViewSet):
         if read_status:
             queryset = queryset.filter(read_status=read_status)
         return queryset
+
+    def perform_create(self, serializer):
+        notification = serializer.save(user=self.request.user)
+        success = send_fcm_notification(
+            self.request.user,
+            notification.notification_type,
+            notification.message
+        )
+        if not success:
+            print(f"Failed to send push notification to {self.request.user.username}")
 
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):

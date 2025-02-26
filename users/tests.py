@@ -39,14 +39,14 @@ class BookingTests(TestCase):
         self.admin_token = str(RefreshToken.for_user(self.admin).access_token)
 
         self.location = Location.objects.create(
-            city='Dar es Salaam',  # Main operational city
-            latitude=-6.7924,      # Dar es Salaam coordinates
+            city='Dar es Salaam',
+            latitude=-6.7924,
             longitude=39.2083,
             address='123 Main St',
             country='Tanzania',
             postal_code='12345'
         )
-        self.location_nairobi = Location.objects.create(  # For testing exclusion
+        self.location_nairobi = Location.objects.create(
             city='Nairobi',
             latitude=-1.2921,
             longitude=36.8219,
@@ -245,24 +245,21 @@ class BookingTests(TestCase):
         self.assertTrue(len(response.data['results']) > 0)
         self.assertIn('distance', response.data['results'][0])
         prices = [p['price_per_night'] for p in response.data['results'] if p['price_per_night'] is not None]
-        self.assertEqual(prices, sorted(prices))  # Verify sorting
-        # Ensure only Dar es Salaam properties are returned
+        self.assertEqual(prices, sorted(prices))
         for prop in response.data['results']:
             self.assertEqual(prop['location']['city'], 'Dar es Salaam')
         self.assertNotIn('Nairobi Property', [p['property_name'] for p in response.data['results']])
 
     def test_nearby_properties_advanced_filtering(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')
-        # Test price range filter within Dar es Salaam
         response = self.client.get(
             '/api/v1/properties/nearby/?latitude=-6.7924&longitude=39.2083&radius=10&price_per_night_min=50&price_per_night_max=150',
             format='json'
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data['results']), 1)  # Only "Dar Property 1" (100) matches
+        self.assertEqual(len(response.data['results']), 1)
         self.assertEqual(response.data['results'][0]['property_name'], 'Dar Property 1')
         self.assertEqual(response.data['results'][0]['location']['city'], 'Dar es Salaam')
-        # Verify expensive property (200) and Nairobi property are excluded
         property_names = [p['property_name'] for p in response.data['results']]
         self.assertNotIn('Dar Property 2', property_names)
         self.assertNotIn('Nairobi Property', property_names)
@@ -299,3 +296,28 @@ class BookingTests(TestCase):
         ticket.refresh_from_db()
         self.assertEqual(ticket.status, 'Resolved')
         self.assertEqual(Notification.objects.filter(user=self.tenant).count(), 1)
+
+    def test_update_fcm_token(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')
+        response = self.client.post(
+            f'/api/v1/users/{self.tenant.id}/update_fcm_token/',
+            {'fcm_token': 'test-device-token'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'FCM token updated')
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.fcm_token, 'test-device-token')
+
+    def test_notification_creation_with_fcm(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')
+        response = self.client.post(
+            '/api/v1/notifications/',
+            {'notification_type': 'Alert', 'message': 'FCM Notification Test'},  # Changed to 'Alert'
+            format='json'
+        )
+        print(response.data)  # Debug output
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Notification.objects.filter(user=self.tenant).count(), 1)
+        notification = Notification.objects.get(user=self.tenant, notification_type='Alert')
+        self.assertEqual(notification.message, 'FCM Notification Test')

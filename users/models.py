@@ -1,19 +1,17 @@
+# users/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser, Group, Permission, UserManager
 from django.core.validators import RegexValidator, MinValueValidator, MaxValueValidator, FileExtensionValidator
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-
-class ActiveUserManager(UserManager):  # Inherit from UserManager
+class ActiveUserManager(UserManager):
     def get_queryset(self):
         return super().get_queryset().filter(is_deleted=False)
-
 
 class ActiveManager(models.Manager):
     def get_queryset(self):
         return super().get_queryset().filter(is_deleted=False)
-
 
 class User(AbstractUser):
     ROLE_CHOICES = [
@@ -27,7 +25,7 @@ class User(AbstractUser):
         message='Phone number must start with +255 or 0, followed by 6 or 7, then 8 digits (e.g., +255712345678 or 0712345678).'
     )
 
-    objects = ActiveUserManager()  # Changed from UserManager to ActiveUserManager
+    objects = ActiveUserManager()
     name = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=13, unique=True, blank=False, validators=[phone_validator])
@@ -44,6 +42,13 @@ class User(AbstractUser):
     user_permissions = models.ManyToManyField(Permission, related_name='custom_user_permissions', blank=True)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
+    # Added FCM token field
+    fcm_token = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="FCM device token for push notifications"
+    )
 
     def delete(self, *args, **kwargs):
         self.is_deleted = True
@@ -58,11 +63,11 @@ class User(AbstractUser):
         return f"{self.username} ({self.role})"
 
     class Meta:
+        app_label = 'users'
         indexes = [
             models.Index(fields=['phone_number'], name='idx_phone_number'),
             models.Index(fields=['role'], name='idx_role'),
         ]
-
 
 class Location(models.Model):
     address = models.TextField()
@@ -75,7 +80,6 @@ class Location(models.Model):
 
     def __str__(self):
         return f"{self.address}, {self.city}"
-
 
 class Property(models.Model):
     PROPERTY_TYPE_CHOICES = [
@@ -141,7 +145,6 @@ class Property(models.Model):
             models.Index(fields=['property_name'], name='idx_property_name'),
         ]
 
-
 class Room(models.Model):
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='rooms')
     room_number = models.CharField(max_length=20)
@@ -151,7 +154,6 @@ class Room(models.Model):
 
     def __str__(self):
         return f"Room {self.room_number} at {self.property.property_name}"
-
 
 class Booking(models.Model):
     RENTAL_TYPE_CHOICES = [
@@ -215,11 +217,11 @@ class Booking(models.Model):
             if old_booking.status != self.status:
                 if self.status not in self.STATUS_TRANSITIONS.get(old_booking.status, []):
                     raise ValidationError(f"Cannot transition from {old_booking.status} to {self.status}")
-
+        
         self.clean()
-
+        
         super().save(*args, **kwargs)
-
+        
         property = self.property
         active_bookings = Booking.objects.filter(
             property=property,
@@ -242,7 +244,6 @@ class Booking(models.Model):
         indexes = [
             models.Index(fields=['start_date', 'end_date'], name='idx_booking_dates'),
         ]
-
 
 class Payment(models.Model):
     PAYMENT_METHOD_CHOICES = [
@@ -279,7 +280,6 @@ class Payment(models.Model):
     def get_active(cls):
         return cls.objects.all()
 
-
 class Review(models.Model):
     objects = ActiveManager()
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')
@@ -301,7 +301,6 @@ class Review(models.Model):
     @classmethod
     def get_active(cls):
         return cls.objects.all()
-
 
 class Message(models.Model):
     objects = ActiveManager()
@@ -325,7 +324,6 @@ class Message(models.Model):
     def get_active(cls):
         return cls.objects.all()
 
-
 class PropertyMedia(models.Model):
     MEDIA_TYPE_CHOICES = [
         ('image', 'Image'),
@@ -339,13 +337,12 @@ class PropertyMedia(models.Model):
     def __str__(self):
         return f"{self.media_type.capitalize()} for {self.property.property_name}"
 
-
 class Notification(models.Model):
     NOTIFICATION_TYPE_CHOICES = [
         ('Alert', 'Alert'),
         ('Reminder', 'Reminder'),
         ('Message', 'Message'),
-        ('Support', 'Support'),  # Added for support tickets
+        ('Support', 'Support'),
     ]
     objects = ActiveManager()
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
@@ -367,7 +364,6 @@ class Notification(models.Model):
     @classmethod
     def get_active(cls):
         return cls.objects.all()
-
 
 class BookingInquiry(models.Model):
     STATUS_CHOICES = [
@@ -396,7 +392,6 @@ class BookingInquiry(models.Model):
     def get_active(cls):
         return cls.objects.all()
 
-
 class MaintenanceRequest(models.Model):
     STATUS_CHOICES = [
         ('Pending', 'Pending'),
@@ -424,13 +419,11 @@ class MaintenanceRequest(models.Model):
     def get_active(cls):
         return cls.objects.all()
 
-
 class Amenity(models.Model):
     name = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return self.name
-
 
 class PropertyAmenity(models.Model):
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='property_amenities')
@@ -441,7 +434,6 @@ class PropertyAmenity(models.Model):
 
     def __str__(self):
         return f"{self.amenity.name} for {self.property.property_name}"
-
 
 class Favorite(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='favorites')
@@ -454,7 +446,6 @@ class Favorite(models.Model):
     def __str__(self):
         return f"{self.property.property_name} favorited by {self.user.username}"
 
-
 class Manager(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='managed_properties')
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='managers')
@@ -463,7 +454,6 @@ class Manager(models.Model):
 
     def __str__(self):
         return f"{self.user.username} managing {self.property.property_name}"
-
 
 class SupportTicket(models.Model):
     STATUS_CHOICES = [
