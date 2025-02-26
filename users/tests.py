@@ -39,19 +39,48 @@ class BookingTests(TestCase):
         self.admin_token = str(RefreshToken.for_user(self.admin).access_token)
 
         self.location = Location.objects.create(
-            city='Test City',
-            latitude=1.0,
-            longitude=1.0
+            city='Dar es Salaam',  # Main operational city
+            latitude=-6.7924,      # Dar es Salaam coordinates
+            longitude=39.2083,
+            address='123 Main St',
+            country='Tanzania',
+            postal_code='12345'
+        )
+        self.location_nairobi = Location.objects.create(  # For testing exclusion
+            city='Nairobi',
+            latitude=-1.2921,
+            longitude=36.8219,
+            address='456 Elm St',
+            country='Kenya',
+            postal_code='67890'
         )
         self.property = Property.objects.create(
             owner=self.landlord,
             location=self.location,
-            property_name='Test Property',
+            property_name='Dar Property 1',
             property_type='Apartment',
             rental_type='short-term',
             price_per_night=100,
             availability_status='Available',
             is_multi_room=True
+        )
+        self.property_expensive = Property.objects.create(
+            owner=self.landlord,
+            location=self.location,
+            property_name='Dar Property 2',
+            property_type='Apartment',
+            rental_type='short-term',
+            price_per_night=200,
+            availability_status='Available'
+        )
+        self.property_nairobi = Property.objects.create(
+            owner=self.landlord,
+            location=self.location_nairobi,
+            property_name='Nairobi Property',
+            property_type='Apartment',
+            rental_type='short-term',
+            price_per_night=100,
+            availability_status='Available'
         )
         self.room = Room.objects.create(
             property=self.property,
@@ -71,7 +100,7 @@ class BookingTests(TestCase):
         )
 
     def test_property_creation(self):
-        self.assertEqual(self.property.property_name, 'Test Property')
+        self.assertEqual(self.property.property_name, 'Dar Property 1')
 
     def test_property_media_upload(self):
         media = PropertyMedia.objects.create(property=self.property, file='test.jpg', media_type='image')
@@ -203,29 +232,40 @@ class BookingTests(TestCase):
             price_per_night=100,
             location=self.location
         )
-        result = Property.objects.filter(location__city='Test City').exists()
+        result = Property.objects.filter(location__city='Dar es Salaam').exists()
         self.assertTrue(result)
 
     def test_nearby_properties(self):
-        Property.objects.create(
-            owner=self.landlord,
-            property_name='Nearby Property',
-            property_type='Apartment',
-            rental_type='short-term',
-            price_per_night=150,
-            availability_status='Available',
-            location=self.location
-        )
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')
         response = self.client.get(
-            '/api/v1/properties/nearby/?latitude=1.0&longitude=1.0&radius=5&property_type=Apartment&sort_by=price_per_night',
+            '/api/v1/properties/nearby/?latitude=-6.7924&longitude=39.2083&radius=5&property_type=Apartment&sort_by=price_per_night',
             format='json'
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(len(response.data['results']) > 0)
         self.assertIn('distance', response.data['results'][0])
         prices = [p['price_per_night'] for p in response.data['results'] if p['price_per_night'] is not None]
-        self.assertEqual(prices, sorted(prices))
+        self.assertEqual(prices, sorted(prices))  # Verify sorting
+        # Ensure only Dar es Salaam properties are returned
+        for prop in response.data['results']:
+            self.assertEqual(prop['location']['city'], 'Dar es Salaam')
+        self.assertNotIn('Nairobi Property', [p['property_name'] for p in response.data['results']])
+
+    def test_nearby_properties_advanced_filtering(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')
+        # Test price range filter within Dar es Salaam
+        response = self.client.get(
+            '/api/v1/properties/nearby/?latitude=-6.7924&longitude=39.2083&radius=10&price_per_night_min=50&price_per_night_max=150',
+            format='json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data['results']), 1)  # Only "Dar Property 1" (100) matches
+        self.assertEqual(response.data['results'][0]['property_name'], 'Dar Property 1')
+        self.assertEqual(response.data['results'][0]['location']['city'], 'Dar es Salaam')
+        # Verify expensive property (200) and Nairobi property are excluded
+        property_names = [p['property_name'] for p in response.data['results']]
+        self.assertNotIn('Dar Property 2', property_names)
+        self.assertNotIn('Nairobi Property', property_names)
 
     def test_chatbot_response(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.tenant_token}')

@@ -110,7 +110,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
     serializer_class = PropertySerializer
     permission_classes = [IsLandlordOrManager]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['property_type', 'rental_type', 'availability_status', 'location__city']
+    filterset_fields = ['property_type', 'rental_type', 'availability_status', 'location__city', 'location__region']
     search_fields = ['property_name', 'description']
     pagination_class = StandardPagination
 
@@ -133,12 +133,21 @@ class PropertyViewSet(viewsets.ModelViewSet):
             rental_type = request.query_params.get('rental_type')
             availability_status = request.query_params.get('availability_status')
             sort_by = request.query_params.get('sort_by', 'distance')
+            # Advanced price filters
+            price_per_night_min = request.query_params.get('price_per_night_min')
+            price_per_night_max = request.query_params.get('price_per_night_max')
+            price_per_month_min = request.query_params.get('price_per_month_min')
+            price_per_month_max = request.query_params.get('price_per_month_max')
 
+            # Base queryset with geolocation and hardcoded main city
+            MAIN_CITY = "Dar es Salaam"  # Your main operational city
             queryset = Property.get_active().filter(
                 location__latitude__isnull=False,
-                location__longitude__isnull=False
+                location__longitude__isnull=False,
+                location__city=MAIN_CITY  # Restrict to Dar es Salaam
             )
 
+            # Apply existing filters
             if property_type:
                 queryset = queryset.filter(property_type=property_type)
             if rental_type:
@@ -146,6 +155,17 @@ class PropertyViewSet(viewsets.ModelViewSet):
             if availability_status:
                 queryset = queryset.filter(availability_status=availability_status)
 
+            # Apply advanced price filters
+            if price_per_night_min:
+                queryset = queryset.filter(price_per_night__gte=float(price_per_night_min))
+            if price_per_night_max:
+                queryset = queryset.filter(price_per_night__lte=float(price_per_night_max))
+            if price_per_month_min:
+                queryset = queryset.filter(price_per_month__gte=float(price_per_month_min))
+            if price_per_month_max:
+                queryset = queryset.filter(price_per_month__lte=float(price_per_month_max))
+
+            # Apply geolocation distance calculation
             queryset = queryset.annotate(
                 distance=6371 * ACos(
                     Cos(Radians(user_lat)) * Cos(Radians(F('location__latitude'))) *
@@ -155,6 +175,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
                 )
             ).filter(distance__lte=radius_km)
 
+            # Sorting
             if sort_by == 'price_per_night':
                 queryset = queryset.order_by('price_per_night')
             elif sort_by == 'price_per_month':
@@ -170,7 +191,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(queryset, many=True)
             return Response(serializer.data)
         except (ValueError, TypeError):
-            return Response({'error': 'Invalid parameters (latitude, longitude, radius, etc.)'}, status=400)
+            return Response({'error': 'Invalid parameters'}, status=400)
 
 class BookingViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSerializer
